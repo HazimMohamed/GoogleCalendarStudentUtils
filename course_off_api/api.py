@@ -2,17 +2,7 @@ import datetime
 import re
 import requests
 from typing import List
-from enum import Enum
-
-
-class DayOfTheWeek(Enum):
-    SUNDAY = 0
-    MONDAY = 1
-    TUESDAY = 2
-    WEDNESDAY = 3
-    THURSDAY = 4
-    FRIDAY = 5
-    SATURDAY = 6
+from common import DayOfTheWeek
 
 
 class CourseTimeSlot:
@@ -33,14 +23,15 @@ class CourseTimeSlot:
 
 
 class Course:
-    def __init__(self, major: str, class_id: int, crn: int, instructor: str, num_credits: int,
-                 locations: List[CourseTimeSlot]):
+    def __init__(self, name: str, major: str, class_id: int, crn: int, instructor: str,
+                 num_credits: int, time_slots: List[CourseTimeSlot]):
+        self.name = name
         self.major = major
         self.class_id = class_id
         self.crn = crn
         self.credits = num_credits
         self.instructor = instructor
-        self.locations = locations
+        self.time_slots = time_slots
 
     def __repr__(self) -> str:
         return f'COURSE: {self.major} {self.class_id}'
@@ -96,6 +87,9 @@ class CourseOffAPI:
 
         return courses
 
+    def get_term_bounds(self):
+        return self.selected_term['start_date'], self.selected_term['end_date']
+
     def _get_individual_course(self, major: str, ident: int, crn: int) -> Course:
         request_url = \
             f'https://soc.courseoff.com/uga/terms/{self.selected_term["id"]}/majors/{major}/courses/{ident}/sections'
@@ -103,13 +97,19 @@ class CourseOffAPI:
         if not course_response:
             raise IOError(f'Error getting sessions for {major} {ident}')
         course_response = course_response.json()
+        course_name_url = \
+            f'https://soc.courseoff.com/uga/terms/{self.selected_term["id"]}/majors/{major}/courses/{ident}'
+        course_name_resp = self.session.get(course_name_url)
+        if not course_name_resp:
+            raise IOError(f'Error getting name for {major} {ident}')
+        course_name = course_name_resp.json()['name']
 
         for course in course_response:
             if course.get('call_number') == crn:
                 instructor = ', '.join((course['instructor']['lname'],
                                         course['instructor']['fname']))
                 time_slots = [self._parse_time_slot(time) for time in course['timeslots']]
-                return Course(major, ident, crn, instructor, course['credits'], time_slots)
+                return Course(course_name, major, ident, crn, instructor, course['credits'], time_slots)
 
         raise IOError(f'Could not find the course specified by crn {crn}')
 
@@ -147,13 +147,13 @@ class CourseOffAPI:
     def _parse_terms(terms_response: dict) -> dict:
         all_terms = {}
         for term in terms_response:
-            term_start_date = datetime.datetime.fromtimestamp(term['start_date'] // 1000)
-            term_end_date = datetime.datetime.fromtimestamp(term['end_date'] // 1000)
+            term_start_date = datetime.datetime.fromtimestamp(term['start_date'] // 1000).date()
+            term_end_date = datetime.datetime.fromtimestamp(term['end_date'] // 1000).date()
             term_name = ' '.join([term['semester'], str(term_start_date.year)])
             all_terms[term_name] = {
                 'id': term['ident'],
-                'start': term_start_date,
-                'end': term_end_date
+                'start_date': term_start_date,
+                'end_date': term_end_date
             }
         return all_terms
 
